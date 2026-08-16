@@ -4,10 +4,12 @@ import 'package:flutter_highlight/themes/github.dart';
 import 'package:highlight/languages/python.dart';
 import 'dart:io';
 import 'models.dart';
+import 'models/code_block.dart'; // 🔥 NEW
 import 'services/file_service.dart';
 import 'services/settings_service.dart';
 import 'services/ai_service.dart';
 import 'services/execution_service.dart';
+import 'services/code_parser.dart'; // 🔥 NEW
 
 void main() {
   runApp(const MyApp());
@@ -34,28 +36,24 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _currentIndex = 1; // start with editor tab
+  int _currentIndex = 1; // editor tab
   final FileService _fileService = FileService();
   final SettingsService _settingsService = SettingsService();
   final AIService _aiService = AIService();
-  final ExecutionService _executionService = ExecutionService();
+  final ExecutionService _executionService = ExecutionService(); // now local
 
-  // Editor state
   CodeController? _codeController;
   String? _currentFileName;
   bool _isModified = false;
 
-  // Chat state
   List<Message> _chatMessages = [];
   bool _includeFileContext = true;
   bool _isLoading = false;
 
-  // Settings state
   List<AIProviderConfig> _providers = [];
   String? _activeProviderName;
   bool _autoSendLogs = false;
 
-  // Execution state
   String _executionOutput = '';
   bool _isExecuting = false;
 
@@ -140,37 +138,14 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // Extract first code block with language detection
-  Map<String, String>? _extractCodeBlockWithLanguage(String content) {
-    final start = content.indexOf('```');
-    if (start == -1) return null;
-    final end = content.indexOf('```', start + 3);
-    if (end == -1) return null;
-    String code = content.substring(start + 3, end).trim();
-    String language = '';
-    final firstLineEnd = code.indexOf('\n');
-    if (firstLineEnd != -1) {
-      final firstLine = code.substring(0, firstLineEnd).trim().toLowerCase();
-      if (firstLine == 'python' || firstLine == 'py' || firstLine == 'bash' || firstLine == 'sh') {
-        language = firstLine == 'py' ? 'python' : firstLine;
-        code = code.substring(firstLineEnd + 1).trim();
-      }
-    }
-    if (language.isEmpty) language = 'python';
-    return {'language': language, 'code': code};
-  }
-
-  // Execute code via Piston API
-  Future<void> _executeCode(String code, String language) async {
+  // 🔥 NEW: Execute a code block locally
+  Future<void> _executeCodeBlock(CodeBlock block) async {
     setState(() {
       _isExecuting = true;
-      _executionOutput = 'Running $language...';
+      _executionOutput = 'Running ${block.language}...';
     });
 
-    final result = await _executionService.execute(
-      code: code,
-      language: language,
-    );
+    final result = await _executionService.execute(block);
 
     setState(() {
       _isExecuting = false;
@@ -180,12 +155,33 @@ class _MainScreenState extends State<MainScreen> {
     });
 
     if (_autoSendLogs && result.isError) {
-      final errorMessage =
-          'The following code (language: $language) produced an error:\n```\n$code\n```\n\nError output:\n```\n${result.stderr}\n```\nPlease suggest a fix.';
+      final errorMessage = 'Code execution failed.\n'
+          'Language: ${block.language}\n'
+          'Code:\n```\n${block.content}\n```\n'
+          'Error:\n```\n${result.stderr}\n```\n'
+          'Please provide a fixed version.';
       await _sendChatMessage(errorMessage);
     }
 
     _showExecutionOutput();
+  }
+
+  // For editor run button
+  Future<void> _runCurrentEditorCode() async {
+    final code = _codeController!.text;
+    if (code.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Editor is empty')),
+      );
+      return;
+    }
+    // Create a CodeBlock for the entire editor content
+    final block = CodeBlock(
+      language: 'python',
+      content: code,
+      fileName: _currentFileName,
+    );
+    await _executeCodeBlock(block);
   }
 
   void _showExecutionOutput() {
@@ -269,17 +265,10 @@ class _MainScreenState extends State<MainScreen> {
       appBar: AppBar(
         title: Text(_currentFileName ?? 'CursorDroid'),
         actions: [
+          // 🔥 Local Run button
           IconButton(
             icon: const Icon(Icons.play_arrow),
-            onPressed: () {
-              if (_codeController!.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Editor is empty')),
-                );
-                return;
-              }
-              _executeCode(_codeController!.text, 'python');
-            },
+            onPressed: _runCurrentEditorCode,
           ),
           IconButton(
             icon: const Icon(Icons.save),
@@ -308,6 +297,8 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
+
+  // ... (rest unchanged: _buildFilesTab, _buildEditorTab, _buildChatTab, _buildChatInput, _buildSettingsTab, _addProviderDialog)
 
   Widget _buildFilesTab() {
     return FutureBuilder<List<FileSystemEntity>>(
@@ -368,9 +359,9 @@ class _MainScreenState extends State<MainScreen> {
             itemBuilder: (context, index) {
               final msg = _chatMessages[index];
               final isUser = msg.role == 'user';
-              Map<String, String>? codeData;
+              List<CodeBlock> codeBlocks = [];
               if (!isUser) {
-                codeData = _extractCodeBlockWithLanguage(msg.content);
+                codeBlocks = CodeParser.extractCodeBlocks(msg.content);
               }
               return Align(
                 alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -385,74 +376,10 @@ class _MainScreenState extends State<MainScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(msg.content),
-                      if (codeData != null)
-                        Builder(builder: (context) {
-                          final code = codeData!['code']!;
-                          final language = codeData!['language']!;
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 4,
-                                children: [
-                                  ElevatedButton.icon(
-                                    icon: const Icon(Icons.check, size: 16),
-                                    label: const Text('Apply to editor'),
-                                    onPressed: () {
-                                      setState(() {
-                                        _codeController?.text = code;
-                                        _isModified = true;
-                                      });
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Code applied to editor')),
-                                      );
-                                    },
-                                  ),
-                                  ElevatedButton.icon(
-                                    icon: const Icon(Icons.save_alt, size: 16),
-                                    label: const Text('Save as new file'),
-                                    onPressed: () async {
-                                      final name = await _showFileNameDialog();
-                                      if (name != null) {
-                                        final fileName = name.endsWith('.py') ? name : '$name.py';
-                                        await _fileService.writeFile(fileName, code);
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(content: Text('Saved as $fileName')),
-                                        );
-                                      }
-                                    },
-                                  ),
-                                  if (language == 'python')
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.play_arrow, size: 16),
-                                      label: const Text('Run as Python'),
-                                      onPressed: () => _executeCode(code, 'python'),
-                                    ),
-                                  if (language == 'bash')
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.terminal, size: 16),
-                                      label: const Text('Run as Bash'),
-                                      onPressed: () => _executeCode(code, 'bash'),
-                                    ),
-                                  if (language != 'python' && language != 'bash') ...[
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.play_arrow, size: 16),
-                                      label: const Text('Run as Python'),
-                                      onPressed: () => _executeCode(code, 'python'),
-                                    ),
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.terminal, size: 16),
-                                      label: const Text('Run as Bash'),
-                                      onPressed: () => _executeCode(code, 'bash'),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ],
-                          );
-                        }),
+                      if (codeBlocks.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        ...codeBlocks.map((block) => _buildCodeBlockActions(block)).toList(),
+                      ],
                     ],
                   ),
                 ),
@@ -467,6 +394,70 @@ class _MainScreenState extends State<MainScreen> {
           ),
         _buildChatInput(),
       ],
+    );
+  }
+
+  // 🔥 NEW: Build actions for a single code block
+  Widget _buildCodeBlockActions(CodeBlock block) {
+    return Card(
+      color: Colors.black38,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${block.language} ${block.fileName != null ? '→ ${block.fileName}' : ''}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Wrap(
+              spacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.check, size: 16),
+                  label: const Text('Apply to editor'),
+                  onPressed: () {
+                    setState(() {
+                      _codeController?.text = block.content;
+                      _isModified = true;
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Code applied to editor')),
+                    );
+                  },
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.save_alt, size: 16),
+                  label: const Text('Save as file'),
+                  onPressed: () async {
+                    final name = await _showFileNameDialog();
+                    if (name != null) {
+                      final fileName = name.endsWith('.py') ? name : '$name.py';
+                      await _fileService.writeFile(fileName, block.content);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Saved as $fileName')),
+                      );
+                    }
+                  },
+                ),
+                if (block.isPython)
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.play_arrow, size: 16),
+                    label: const Text('Run Python'),
+                    onPressed: () => _executeCodeBlock(block),
+                  ),
+                if (block.isShell)
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.terminal, size: 16),
+                    label: const Text('Run Shell'),
+                    onPressed: () => _executeCodeBlock(block),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
