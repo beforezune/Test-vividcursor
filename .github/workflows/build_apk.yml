@@ -23,11 +23,11 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      # 🔥 This step regenerates a valid Android project
+      # 🔥 Regenerate Android platform files with a valid project name
       - name: Regenerate Android platform files
         run: |
           rm -rf android
-          flutter create --platforms=android .
+          flutter create --platforms=android --project-name cursordroid .
 
       - name: Get dependencies
         run: flutter pub get
