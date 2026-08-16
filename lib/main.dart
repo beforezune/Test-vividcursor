@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:code_text_field/code_text_field.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:highlight/languages/python.dart';
-import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'models.dart';
 import 'services/file_service.dart';
@@ -56,10 +55,10 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    // ✅ Removed theme from CodeController
     _codeController = CodeController(
       text: '# New Python file\n',
       language: python,
-      theme: githubTheme,
     );
     _loadSettings();
   }
@@ -85,7 +84,6 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _saveCurrentFile() async {
     if (_currentFileName == null) {
-      // Create new file
       final name = await _showFileNameDialog();
       if (name == null) return;
       _currentFileName = name.endsWith('.py') ? name : '$name.py';
@@ -157,7 +155,6 @@ class _MainScreenState extends State<MainScreen> {
       _isLoading = true;
     });
 
-    // Build messages with optional file context
     final messagesToSend = <Message>[];
     if (_includeFileContext && _codeController!.text.isNotEmpty) {
       messagesToSend.add(Message(
@@ -250,10 +247,12 @@ class _MainScreenState extends State<MainScreen> {
     return Column(
       children: [
         Expanded(
+          // ✅ theme moved here and onChanged fixed
           child: CodeField(
             controller: _codeController!,
+            theme: githubTheme,
             textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 14),
-            onChanged: () => setState(() => _isModified = true),
+            onChanged: (value) => setState(() => _isModified = true),
           ),
         ),
         if (_isModified)
