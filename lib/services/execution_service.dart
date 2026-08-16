@@ -29,23 +29,12 @@ class ExecutionService {
   }
 
   /// Execute Python code locally using python_ffi.
-  /// The code is written to a temp file, then read and executed as a string.
-  Future<ExecutionResult> executePython(String code, {String? fileName}) async {
+  Future<ExecutionResult> executePython(String code) async {
     await _ensurePython();
 
-    // Write code to file (for potential future use, but we'll execute the string)
-    final tempDir = await getTemporaryDirectory();
-    final execDir = Directory('${tempDir.path}/code_exec');
-    if (!await execDir.exists()) {
-      await execDir.create(recursive: true);
-    }
-
-    final file = File('${execDir.path}/${fileName ?? '__temp__.py'}');
-    await file.writeAsString(code);
-
     try {
-      // Use executeString because executeFile is not available in python_ffi 0.4.4
-      final result = await _python!.executeString(code);
+      // Correct method is 'execute'
+      final result = await _python!.execute(code);
       return ExecutionResult(
         stdout: result.stdout,
         stderr: result.stderr,
@@ -66,7 +55,6 @@ class ExecutionService {
       final result = await Process.run(
         '/system/bin/sh',
         ['-c', command],
-        workingDirectory: await _getExecutionDirectory(),
       );
       return ExecutionResult(
         stdout: result.stdout.toString(),
@@ -82,19 +70,10 @@ class ExecutionService {
     }
   }
 
-  Future<String> _getExecutionDirectory() async {
-    final tempDir = await getTemporaryDirectory();
-    final execDir = Directory('${tempDir.path}/code_exec');
-    if (!await execDir.exists()) {
-      await execDir.create(recursive: true);
-    }
-    return execDir.path;
-  }
-
   /// Unified executor: based on code block type.
   Future<ExecutionResult> execute(CodeBlock block) async {
     if (block.isPython) {
-      return executePython(block.content, fileName: block.fileName);
+      return executePython(block.content);
     } else if (block.isShell) {
       return executeShell(block.content);
     } else {
