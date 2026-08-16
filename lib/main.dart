@@ -155,6 +155,7 @@ class _MainScreenState extends State<MainScreen> {
       _isLoading = true;
     });
 
+    // Build messages with optional file context
     final messagesToSend = <Message>[];
     if (_includeFileContext && _codeController!.text.isNotEmpty) {
       messagesToSend.add(Message(
@@ -247,12 +248,13 @@ class _MainScreenState extends State<MainScreen> {
     return Column(
       children: [
         Expanded(
-          // ✅ theme moved here and onChanged fixed
-          child: CodeField(
-            controller: _codeController!,
-            theme: githubTheme,
-            textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 14),
-            onChanged: (value) => setState(() => _isModified = true),
+          child: CodeTheme(
+            data: CodeThemeData(styles: githubTheme),
+            child: CodeField(
+              controller: _codeController!,
+              textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+              onChanged: (value) => setState(() => _isModified = true),
+            ),
           ),
         ),
         if (_isModified)
@@ -392,7 +394,7 @@ class _MainScreenState extends State<MainScreen> {
     final apiKeyController = TextEditingController();
     final modelController = TextEditingController();
 
-    final result = await showDialog(
+    await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Add AI Provider'),
