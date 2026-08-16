@@ -3,13 +3,14 @@ name: Build APK
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch:   # Allow manual trigger
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -23,30 +24,38 @@ jobs:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      # Regenerate Android platform files with valid project name
+      # Regenerate Android platform files with a valid project name
       - name: Regenerate Android platform files
         run: |
           rm -rf android
           flutter create --platforms=android --project-name cursordroid .
 
-      # 🔥 Add INTERNET permission to the main AndroidManifest.xml
-      - name: Add INTERNET permission
+      # Add INTERNET permission and configure Android for python_ffi
+      - name: Configure Android
         run: |
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          # Insert the permission line after <manifest ...> tag if not already present
           if ! grep -q "android.permission.INTERNET" "$MANIFEST_PATH"; then
             sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' "$MANIFEST_PATH"
           fi
-          cat "$MANIFEST_PATH"  # print to verify
 
-      - name: Get dependencies
+          # Set minSdkVersion to 21 and NDK version for python_ffi
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' android/app/build.gradle
+          sed -i 's/ndkVersion flutter.ndkVersion/ndkVersion "23.1.7779620"/' android/app/build.gradle
+
+          # Print files for verification
+          echo "----- AndroidManifest.xml -----"
+          cat "$MANIFEST_PATH"
+          echo "----- build.gradle -----"
+          cat android/app/build.gradle
+
+      - name: Get Flutter dependencies
         run: flutter pub get
 
       - name: Build APK
         run: flutter build apk --release
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
