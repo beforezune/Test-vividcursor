@@ -7,7 +7,6 @@ import 'models.dart';
 import 'services/file_service.dart';
 import 'services/settings_service.dart';
 import 'services/ai_service.dart';
-// 🔥 NEW: Execution service
 import 'services/execution_service.dart';
 
 void main() {
@@ -35,11 +34,10 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _currentIndex = 1;
+  int _currentIndex = 1; // start with editor tab
   final FileService _fileService = FileService();
   final SettingsService _settingsService = SettingsService();
   final AIService _aiService = AIService();
-  // 🔥 NEW: Execution service
   final ExecutionService _executionService = ExecutionService();
 
   // Editor state
@@ -55,10 +53,9 @@ class _MainScreenState extends State<MainScreen> {
   // Settings state
   List<AIProviderConfig> _providers = [];
   String? _activeProviderName;
-  // 🔥 NEW: Auto-send logs to AI
   bool _autoSendLogs = false;
 
-  // 🔥 NEW: Execution state
+  // Execution state
   String _executionOutput = '';
   bool _isExecuting = false;
 
@@ -75,7 +72,6 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _loadSettings() async {
     final providers = await _settingsService.loadProviders();
     final active = await _settingsService.getActiveProviderName();
-    // 🔥 NEW: Load auto-send logs setting
     final autoSend = await _settingsService.getAutoSendLogs();
     setState(() {
       _providers = providers;
@@ -144,7 +140,27 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // 🔥 NEW: Run code using Piston API
+  // Extract first code block with language detection
+  Map<String, String>? _extractCodeBlockWithLanguage(String content) {
+    final start = content.indexOf('```');
+    if (start == -1) return null;
+    final end = content.indexOf('```', start + 3);
+    if (end == -1) return null;
+    String code = content.substring(start + 3, end).trim();
+    String language = '';
+    final firstLineEnd = code.indexOf('\n');
+    if (firstLineEnd != -1) {
+      final firstLine = code.substring(0, firstLineEnd).trim().toLowerCase();
+      if (firstLine == 'python' || firstLine == 'py' || firstLine == 'bash' || firstLine == 'sh') {
+        language = firstLine == 'py' ? 'python' : firstLine;
+        code = code.substring(firstLineEnd + 1).trim();
+      }
+    }
+    if (language.isEmpty) language = 'python';
+    return {'language': language, 'code': code};
+  }
+
+  // Execute code via Piston API
   Future<void> _executeCode(String code, String language) async {
     setState(() {
       _isExecuting = true;
@@ -163,18 +179,15 @@ class _MainScreenState extends State<MainScreen> {
           : 'STDOUT:\n${result.stdout}\n\nSTDERR:\n${result.stderr}\nExit code: ${result.exitCode}';
     });
 
-    // 🔥 NEW: If auto-send logs is on and there was an error, send to AI
     if (_autoSendLogs && result.isError) {
       final errorMessage =
           'The following code (language: $language) produced an error:\n```\n$code\n```\n\nError output:\n```\n${result.stderr}\n```\nPlease suggest a fix.';
-      _sendChatMessage(errorMessage, isUser: false);
+      await _sendChatMessage(errorMessage);
     }
 
-    // Show output in a bottom sheet
     _showExecutionOutput();
   }
 
-  // 🔥 NEW: Show execution output in a bottom sheet
   void _showExecutionOutput() {
     showModalBottomSheet(
       context: context,
@@ -202,29 +215,7 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // 🔥 NEW: Extract code block with language detection
-  Map<String, String>? _extractCodeBlockWithLanguage(String content) {
-    final start = content.indexOf('```');
-    if (start == -1) return null;
-    final end = content.indexOf('```', start + 3);
-    if (end == -1) return null;
-    String code = content.substring(start + 3, end).trim();
-    String language = '';
-    // First line may contain language identifier (e.g., python, bash)
-    final firstLineEnd = code.indexOf('\n');
-    if (firstLineEnd != -1) {
-      final firstLine = code.substring(0, firstLineEnd).trim().toLowerCase();
-      if (firstLine == 'python' || firstLine == 'py' || firstLine == 'bash' || firstLine == 'sh') {
-        language = firstLine == 'py' ? 'python' : firstLine;
-        code = code.substring(firstLineEnd + 1).trim();
-      }
-    }
-    // Default to python if no language detected
-    if (language.isEmpty) language = 'python';
-    return {'language': language, 'code': code};
-  }
-
-  Future<void> _sendChatMessage(String userText, {bool isUser = true}) async {
+  Future<void> _sendChatMessage(String userText) async {
     final provider = _providers.firstWhere(
       (p) => p.name == _activeProviderName,
       orElse: () => AIProviderConfig(
@@ -241,18 +232,10 @@ class _MainScreenState extends State<MainScreen> {
       return;
     }
 
-    if (isUser) {
-      final newUserMessage = Message(role: 'user', content: userText);
-      setState(() {
-        _chatMessages.add(newUserMessage);
-        _isLoading = true;
-      });
-    } else {
-      // If auto-sending logs, we still want to show the AI thinking
-      setState(() {
-        _isLoading = true;
-      });
-    }
+    setState(() {
+      _chatMessages.add(Message(role: 'user', content: userText));
+      _isLoading = true;
+    });
 
     final messagesToSend = <Message>[];
     if (_includeFileContext && _codeController!.text.isNotEmpty) {
@@ -286,7 +269,6 @@ class _MainScreenState extends State<MainScreen> {
       appBar: AppBar(
         title: Text(_currentFileName ?? 'CursorDroid'),
         actions: [
-          // 🔥 NEW: Run current file as Python
           IconButton(
             icon: const Icon(Icons.play_arrow),
             onPressed: () {
@@ -386,7 +368,6 @@ class _MainScreenState extends State<MainScreen> {
             itemBuilder: (context, index) {
               final msg = _chatMessages[index];
               final isUser = msg.role == 'user';
-              // 🔥 NEW: For assistant messages, try to extract code block with language
               Map<String, String>? codeData;
               if (!isUser) {
                 codeData = _extractCodeBlockWithLanguage(msg.content);
@@ -404,71 +385,74 @@ class _MainScreenState extends State<MainScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(msg.content),
-                      if (codeData != null) ...[
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          children: [
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.check, size: 16),
-                              label: const Text('Apply to editor'),
-                              onPressed: () {
-                                setState(() {
-                                  _codeController?.text = codeData['code']!;
-                                  _isModified = true;
-                                });
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Code applied to editor')),
-                                );
-                              },
-                            ),
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.save_alt, size: 16),
-                              label: const Text('Save as new file'),
-                              onPressed: () async {
-                                final name = await _showFileNameDialog();
-                                if (name != null) {
-                                  final fileName = name.endsWith('.py') ? name : '$name.py';
-                                  await _fileService.writeFile(fileName, codeData['code']!);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Saved as $fileName')),
-                                  );
-                                }
-                              },
-                            ),
-                            // 🔥 NEW: Run buttons based on detected language
-                            if (codeData['language'] == 'python')
-                              ElevatedButton.icon(
-                                icon: const Icon(Icons.play_arrow, size: 16),
-                                label: const Text('Run as Python'),
-                                onPressed: () => _executeCode(codeData['code']!, 'python'),
-                              ),
-                            if (codeData['language'] == 'bash')
-                              ElevatedButton.icon(
-                                icon: const Icon(Icons.terminal, size: 16),
-                                label: const Text('Run as Bash'),
-                                onPressed: () => _executeCode(codeData['code']!, 'bash'),
-                              ),
-                            // Always offer a generic run option if language unknown
-                            if (codeData['language'] == 'python' || codeData['language'] == 'bash')
-                              const SizedBox.shrink(),
-                            if (codeData['language'] == 'python' || codeData['language'] == 'bash')
-                              // Provide alternative run (bash for python and vice versa)
-                              (codeData['language'] == 'python'
-                                  ? ElevatedButton.icon(
-                                      icon: const Icon(Icons.terminal, size: 16),
-                                      label: const Text('Run as Bash'),
-                                      onPressed: () => _executeCode(codeData['code']!, 'bash'),
-                                    )
-                                  : ElevatedButton.icon(
+                      if (codeData != null)
+                        Builder(builder: (context) {
+                          final code = codeData!['code']!;
+                          final language = codeData!['language']!;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: [
+                                  ElevatedButton.icon(
+                                    icon: const Icon(Icons.check, size: 16),
+                                    label: const Text('Apply to editor'),
+                                    onPressed: () {
+                                      setState(() {
+                                        _codeController?.text = code;
+                                        _isModified = true;
+                                      });
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Code applied to editor')),
+                                      );
+                                    },
+                                  ),
+                                  ElevatedButton.icon(
+                                    icon: const Icon(Icons.save_alt, size: 16),
+                                    label: const Text('Save as new file'),
+                                    onPressed: () async {
+                                      final name = await _showFileNameDialog();
+                                      if (name != null) {
+                                        final fileName = name.endsWith('.py') ? name : '$name.py';
+                                        await _fileService.writeFile(fileName, code);
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text('Saved as $fileName')),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                  if (language == 'python')
+                                    ElevatedButton.icon(
                                       icon: const Icon(Icons.play_arrow, size: 16),
                                       label: const Text('Run as Python'),
-                                      onPressed: () => _executeCode(codeData['code']!, 'python'),
-                                    )),
-                          ],
-                        ),
-                      ],
+                                      onPressed: () => _executeCode(code, 'python'),
+                                    ),
+                                  if (language == 'bash')
+                                    ElevatedButton.icon(
+                                      icon: const Icon(Icons.terminal, size: 16),
+                                      label: const Text('Run as Bash'),
+                                      onPressed: () => _executeCode(code, 'bash'),
+                                    ),
+                                  if (language != 'python' && language != 'bash') ...[
+                                    ElevatedButton.icon(
+                                      icon: const Icon(Icons.play_arrow, size: 16),
+                                      label: const Text('Run as Python'),
+                                      onPressed: () => _executeCode(code, 'python'),
+                                    ),
+                                    ElevatedButton.icon(
+                                      icon: const Icon(Icons.terminal, size: 16),
+                                      label: const Text('Run as Bash'),
+                                      onPressed: () => _executeCode(code, 'bash'),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          );
+                        }),
                     ],
                   ),
                 ),
@@ -569,7 +553,6 @@ class _MainScreenState extends State<MainScreen> {
             },
           ),
         const Divider(height: 32),
-        // 🔥 NEW: Auto-send logs toggle
         SwitchListTile(
           title: const Text('Auto-send error logs to AI'),
           subtitle: const Text('When code execution fails, automatically send the error to AI for a fix'),
