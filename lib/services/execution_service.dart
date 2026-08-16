@@ -1,5 +1,6 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:python_ffi/python_ffi.dart';
 
 class ExecutionResult {
   final String stdout;
@@ -16,38 +17,93 @@ class ExecutionResult {
 }
 
 class ExecutionService {
-  static const String _apiUrl = 'https://emkc.org/api/v2/piston/execute';
+  // Singleton-like: initialize Python once
+  static Python? _python;
+  static bool _initialized = false;
 
-  Future<ExecutionResult> execute({
-    required String code,
-    required String language,
-  }) async {
-    final response = await http.post(
-      Uri.parse(_apiUrl),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'language': language,
-        'version': '*',
-        'files': [
-          {'content': code}
-        ],
-      }),
-    );
+  Future<void> _ensurePython() async {
+    if (_initialized) return;
+    _python = Python();
+    await _python!.initialize();
+    _initialized = true;
+  }
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final run = data['run'];
-      return ExecutionResult(
-        stdout: run['stdout'] ?? '',
-        stderr: run['stderr'] ?? '',
-        exitCode: run['code'] ?? 0,
-      );
+  /// Execute Python code locally using python_ffi.
+  /// If [fileName] is provided, it will be written to temp dir and executed.
+  Future<ExecutionResult> executePython(String code, {String? fileName}) async {
+    await _ensurePython();
+
+    final tempDir = await getTemporaryDirectory();
+    final execDir = Directory('${tempDir.path}/code_exec');
+    if (!await execDir.exists()) {
+      await execDir.create(recursive: true);
+    }
+
+    File? file;
+    if (fileName != null && fileName.isNotEmpty) {
+      file = File('${execDir.path}/$fileName');
+      await file.writeAsString(code);
     } else {
+      file = File('${execDir.path}/__temp__.py');
+      await file.writeAsString(code);
+    }
+
+    try {
+      final result = await _python!.runFile(file.path);
+      return ExecutionResult(
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      );
+    } catch (e) {
       return ExecutionResult(
         stdout: '',
-        stderr: 'Execution API error: ${response.statusCode}\n${response.body}',
+        stderr: 'Python execution error: $e',
         exitCode: -1,
       );
+    }
+  }
+
+  /// Execute shell command (bash/sh) using Android's native shell.
+  Future<ExecutionResult> executeShell(String command) async {
+    try {
+      final result = await Process.run(
+        '/system/bin/sh',
+        ['-c', command],
+        workingDirectory: await _getExecutionDirectory(),
+      );
+      return ExecutionResult(
+        stdout: result.stdout.toString(),
+        stderr: result.stderr.toString(),
+        exitCode: result.exitCode,
+      );
+    } catch (e) {
+      return ExecutionResult(
+        stdout: '',
+        stderr: 'Shell execution error: $e',
+        exitCode: -1,
+      );
+    }
+  }
+
+  Future<String> _getExecutionDirectory() async {
+    final tempDir = await getTemporaryDirectory();
+    final execDir = Directory('${tempDir.path}/code_exec');
+    if (!await execDir.exists()) {
+      await execDir.create(recursive: true);
+    }
+    return execDir.path;
+  }
+
+  /// Unified executor: based on code block type.
+  Future<ExecutionResult> execute(CodeBlock block) async {
+    if (block.isPython) {
+      return executePython(block.content, fileName: block.fileName);
+    } else if (block.isShell) {
+      return executeShell(block.content);
+    } else {
+      // fallback: treat as Python
+      return executePython(block.content);
     }
   }
 }
