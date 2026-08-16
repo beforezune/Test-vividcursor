@@ -33,7 +33,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _currentIndex = 1; // start with editor tab
+  int _currentIndex = 1;
   final FileService _fileService = FileService();
   final SettingsService _settingsService = SettingsService();
   final AIService _aiService = AIService();
@@ -55,7 +55,6 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ Removed theme from CodeController
     _codeController = CodeController(
       text: '# New Python file\n',
       language: python,
@@ -78,7 +77,7 @@ class _MainScreenState extends State<MainScreen> {
       _currentFileName = fileName;
       _codeController?.text = content;
       _isModified = false;
-      _currentIndex = 1; // switch to editor
+      _currentIndex = 1;
     });
   }
 
@@ -132,6 +131,25 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  // 🔥 NEW: Extract the first code block from a message
+  String? _extractCodeBlock(String content) {
+    final start = content.indexOf('```');
+    if (start == -1) return null;
+    final end = content.indexOf('```', start + 3);
+    if (end == -1) return null;
+    String code = content.substring(start + 3, end);
+    // Remove language identifier if present (e.g., ```python)
+    if (code.startsWith('python\n')) {
+      code = code.substring(7);
+    } else if (code.contains('\n') && code.split('\n')[0].trim().isNotEmpty) {
+      final firstLine = code.split('\n')[0].trim();
+      if (firstLine == 'python' || firstLine == 'py') {
+        code = code.substring(firstLine.length + 1);
+      }
+    }
+    return code.trim();
+  }
+
   Future<void> _sendChatMessage(String userText) async {
     final provider = _providers.firstWhere(
       (p) => p.name == _activeProviderName,
@@ -155,7 +173,6 @@ class _MainScreenState extends State<MainScreen> {
       _isLoading = true;
     });
 
-    // Build messages with optional file context
     final messagesToSend = <Message>[];
     if (_includeFileContext && _codeController!.text.isNotEmpty) {
       messagesToSend.add(Message(
@@ -275,6 +292,7 @@ class _MainScreenState extends State<MainScreen> {
             itemBuilder: (context, index) {
               final msg = _chatMessages[index];
               final isUser = msg.role == 'user';
+              final codeBlock = isUser ? null : _extractCodeBlock(msg.content);
               return Align(
                 alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                 child: Container(
@@ -284,7 +302,48 @@ class _MainScreenState extends State<MainScreen> {
                     color: isUser ? Colors.blue.shade700 : Colors.grey.shade800,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text(msg.content),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(msg.content),
+                      if (codeBlock != null) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.check, size: 16),
+                              label: const Text('Apply to editor'),
+                              onPressed: () {
+                                setState(() {
+                                  _codeController?.text = codeBlock;
+                                  _isModified = true;
+                                });
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Code applied to editor')),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.save_alt, size: 16),
+                              label: const Text('Save as new file'),
+                              onPressed: () async {
+                                final name = await _showFileNameDialog();
+                                if (name != null) {
+                                  final fileName = name.endsWith('.py') ? name : '$name.py';
+                                  await _fileService.writeFile(fileName, codeBlock);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Saved as $fileName')),
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               );
             },
