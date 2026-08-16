@@ -1,6 +1,5 @@
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'package:python_ffi/python_ffi.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import '../models/code_block.dart';
 
 class ExecutionResult {
@@ -18,67 +17,45 @@ class ExecutionResult {
 }
 
 class ExecutionService {
-  static PythonFfi? _python;
-  static bool _initialized = false;
+  static const String _apiUrl = 'https://emkc.org/api/v2/piston/execute';
 
-  Future<void> _ensurePython() async {
-    if (_initialized) return;
-    _python = PythonFfi.instance;
-    await _python!.initialize();
-    _initialized = true;
-  }
-
-  /// Execute Python code locally using python_ffi.
-  Future<ExecutionResult> executePython(String code) async {
-    await _ensurePython();
-
-    try {
-      // Correct method is 'execute'
-      final result = await _python!.execute(code);
-      return ExecutionResult(
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-      );
-    } catch (e) {
-      return ExecutionResult(
-        stdout: '',
-        stderr: 'Python execution error: $e',
-        exitCode: -1,
-      );
-    }
-  }
-
-  /// Execute shell command (bash/sh) using Android's native shell.
-  Future<ExecutionResult> executeShell(String command) async {
-    try {
-      final result = await Process.run(
-        '/system/bin/sh',
-        ['-c', command],
-      );
-      return ExecutionResult(
-        stdout: result.stdout.toString(),
-        stderr: result.stderr.toString(),
-        exitCode: result.exitCode,
-      );
-    } catch (e) {
-      return ExecutionResult(
-        stdout: '',
-        stderr: 'Shell execution error: $e',
-        exitCode: -1,
-      );
-    }
-  }
-
-  /// Unified executor: based on code block type.
+  /// Execute code via the online Piston API.
+  /// Supports Python, Bash, and other languages.
   Future<ExecutionResult> execute(CodeBlock block) async {
-    if (block.isPython) {
-      return executePython(block.content);
-    } else if (block.isShell) {
-      return executeShell(block.content);
+    // Normalize language name for Piston
+    String language = block.language.toLowerCase();
+    if (language == 'py' || language == 'python') {
+      language = 'python';
+    } else if (language == 'bash' || language == 'sh' || language == 'shell') {
+      language = 'bash';
+    }
+
+    final response = await http.post(
+      Uri.parse(_apiUrl),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'language': language,
+        'version': '*',
+        'files': [
+          {'content': block.content}
+        ],
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final run = data['run'];
+      return ExecutionResult(
+        stdout: run['stdout'] ?? '',
+        stderr: run['stderr'] ?? '',
+        exitCode: run['code'] ?? 0,
+      );
     } else {
-      // fallback: treat as Python
-      return executePython(block.content);
+      return ExecutionResult(
+        stdout: '',
+        stderr: 'Execution API error: ${response.statusCode}\n${response.body}',
+        exitCode: -1,
+      );
     }
   }
 }
