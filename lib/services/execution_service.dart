@@ -18,7 +18,6 @@ class ExecutionResult {
 }
 
 class ExecutionService {
-  // Singleton-like: initialize Python once
   static PythonFfi? _python;
   static bool _initialized = false;
 
@@ -30,27 +29,23 @@ class ExecutionService {
   }
 
   /// Execute Python code locally using python_ffi.
-  /// If [fileName] is provided, it will be written to temp dir and executed.
+  /// The code is written to a temp file, then read and executed as a string.
   Future<ExecutionResult> executePython(String code, {String? fileName}) async {
     await _ensurePython();
 
+    // Write code to file (for potential future use, but we'll execute the string)
     final tempDir = await getTemporaryDirectory();
     final execDir = Directory('${tempDir.path}/code_exec');
     if (!await execDir.exists()) {
       await execDir.create(recursive: true);
     }
 
-    File? file;
-    if (fileName != null && fileName.isNotEmpty) {
-      file = File('${execDir.path}/$fileName');
-      await file.writeAsString(code);
-    } else {
-      file = File('${execDir.path}/__temp__.py');
-      await file.writeAsString(code);
-    }
+    final file = File('${execDir.path}/${fileName ?? '__temp__.py'}');
+    await file.writeAsString(code);
 
     try {
-      final result = await _python!.executeFile(file.path);
+      // Use executeString because executeFile is not available in python_ffi 0.4.4
+      final result = await _python!.executeString(code);
       return ExecutionResult(
         stdout: result.stdout,
         stderr: result.stderr,
