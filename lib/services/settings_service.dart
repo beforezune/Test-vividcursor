@@ -5,6 +5,8 @@ import '../models.dart';
 class SettingsService {
   static const _providersKey = 'providers';
   static const _activeProviderKey = 'activeProvider';
+  // 🔥 NEW: Key for auto-send logs
+  static const _autoSendLogsKey = 'autoSendLogs';
 
   Future<List<AIProviderConfig>> loadProviders() async {
     final prefs = await SharedPreferences.getInstance();
@@ -32,5 +34,16 @@ class SettingsService {
   Future<void> setActiveProvider(String name) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_activeProviderKey, name);
+  }
+
+  // 🔥 NEW: Auto-send logs methods
+  Future<bool> getAutoSendLogs() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoSendLogsKey) ?? false;
+  }
+
+  Future<void> setAutoSendLogs(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoSendLogsKey, value);
   }
 }
