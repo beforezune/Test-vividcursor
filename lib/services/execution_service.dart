@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:python_ffi/python_ffi.dart';
+import '../models/code_block.dart';
 
 class ExecutionResult {
   final String stdout;
@@ -18,12 +19,12 @@ class ExecutionResult {
 
 class ExecutionService {
   // Singleton-like: initialize Python once
-  static Python? _python;
+  static PythonFfi? _python;
   static bool _initialized = false;
 
   Future<void> _ensurePython() async {
     if (_initialized) return;
-    _python = Python();
+    _python = PythonFfi.instance;
     await _python!.initialize();
     _initialized = true;
   }
@@ -49,7 +50,7 @@ class ExecutionService {
     }
 
     try {
-      final result = await _python!.runFile(file.path);
+      final result = await _python!.executeFile(file.path);
       return ExecutionResult(
         stdout: result.stdout,
         stderr: result.stderr,
